@@ -2,9 +2,9 @@ class SearchEngineFactory:
     _SEARCH_ENGINES = {}
 
     @classmethod
-    def get_se(cls, name: str, **kwargs):
+    def get_se(cls, name: str, keyword: str, n_images: int, **kwargs):
         if name in cls._SEARCH_ENGINES.keys():
-            return cls._SEARCH_ENGINES.get(name)(**kwargs)
+            return cls._SEARCH_ENGINES.get(name)(keyword, n_images, **kwargs)
         else:
             raise ValueError(f"{name} is not a valid SE")
 

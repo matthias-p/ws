@@ -7,6 +7,7 @@ from typing import Callable, Type, Dict, Union, Tuple
 import os
 
 from search_engines.registry import SearchEngineFactory
+from search_engines.search_engine_interface import SearchEngineInterface
 
 
 def clear():
@@ -48,6 +49,7 @@ class MainMenu(State):
             "2": ("Print current config", self.print_current_config),
             "3": ("Export current config", self.export_current_config),
             "4": ("Load saved config", self.load_config),
+            "5": ("Start scraping", self.scrape),
             "quit": ("Exit the program", exit)
         }
         super().__init__(callback=callback)
@@ -73,6 +75,20 @@ class MainMenu(State):
         """Loads config from current directory"""
         with open("config.json", "r", encoding="utf-8") as config_file:
             WebscraperDfa.load_config(json.load(config_file))
+        self.callback(Transitions.CURRENT)
+
+    def scrape(self):
+        """
+        Starts the scraping process by getting the search engine implementation and initializing it
+        """
+        config = WebscraperDfa.get_config()
+        n_samples = config.get("n_samples")
+        for search_engine in config.get("search_engines"):
+            for keyword in config.get("keywords"):
+                se: SearchEngineInterface = \
+                    SearchEngineFactory.get_se(search_engine, keyword=keyword, n_images=n_samples)
+                se.download_urls()
+        input("Done! Press any key to return")
         self.callback(Transitions.CURRENT)
 
     def run(self):
