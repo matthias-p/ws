@@ -1,4 +1,5 @@
 venv
+test*
 .idea
 __pycache__
 thoughts
