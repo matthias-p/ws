@@ -1,18 +1,23 @@
 """This file contains the sm for the cli menu"""
-import json
+import os
+import pathlib
 import time
 from abc import ABC
 from enum import Enum, auto
 from typing import Callable, Type, Dict, Union, Tuple
-import os
 
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
+from webscraper_config import Config as WsConfig
 
 
 def clear():
     """Clears the screen on command line"""
     os.system("clear")
+
+
+def press_any_key():  # pylint: disable=C0116
+    input("Press any key to continue")
 
 
 class Transitions(Enum):
@@ -26,9 +31,17 @@ class Transitions(Enum):
 class State(ABC):
     """ABC of a state in the sm"""
 
-    def __init__(self, callback: Callable):
+    def __init__(self, config: WsConfig, callback: Callable):
         """Callback should be called after the state has done its work."""
+        self.config = config
         self.callback = callback
+
+        self.generic_answers = {
+            "main": Transitions.MAIN_MENU,
+            "prev": Transitions.PREVIOUS,
+            "next": Transitions.NEXT,
+        }
+
         clear()
         self.run()
 
@@ -40,10 +53,17 @@ class State(ABC):
         """Callback to Main Menu"""
         self.callback(Transitions.MAIN_MENU)
 
+    def check_for_generic_answer(self, user_input: str) -> bool:
+        """Check if user is entering a command like prev, next, main etc..."""
+        if (clean_input := user_input.strip(" ").rstrip(" ")) in self.generic_answers:
+            self.callback(self.generic_answers.get(clean_input))
+            return True
+        return False
+
 
 class MainMenu(State):
     """Main State of the DFA"""
-    def __init__(self, callback: Callable):
+    def __init__(self, config: WsConfig, callback: Callable):
         self.option_mapping = {
             "1": ("Create new config", self.create_new_config),
             "2": ("Print current config", self.print_current_config),
@@ -52,7 +72,7 @@ class MainMenu(State):
             "5": ("Start scraping", self.scrape),
             "quit": ("Exit the program", exit)
         }
-        super().__init__(callback=callback)
+        super().__init__(config=config, callback=callback)
 
     def create_new_config(self):
         """Begin process of creation of webscraper config"""
@@ -61,34 +81,32 @@ class MainMenu(State):
     def print_current_config(self):
         """Print the config"""
         print("Current config is: ")
-        print(WebscraperDfa.get_config())
-        input("Press any key to continue")
+        print(self.config.to_json())
+        press_any_key()
         self.callback(Transitions.CURRENT)
 
     def export_current_config(self):
         """Exports the config as config.json"""
-        with open("config.json", "w", encoding="utf-8") as config_file:
-            json.dump(WebscraperDfa.get_config(), config_file)
+        self.config.save_config(pathlib.Path("./config.json"))
         self.callback(Transitions.CURRENT)
 
     def load_config(self):
         """Loads config from current directory"""
-        with open("config.json", "r", encoding="utf-8") as config_file:
-            WebscraperDfa.load_config(json.load(config_file))
+        self.config.load_config(pathlib.Path("./config.json"))
         self.callback(Transitions.CURRENT)
 
     def scrape(self):
         """
         Starts the scraping process by getting the search engine implementation and initializing it
         """
-        config = WebscraperDfa.get_config()
+        config = self.config.to_json()
         n_samples = config.get("n_samples")
         for search_engine in config.get("search_engines"):
             for keyword in config.get("keywords"):
-                se: SearchEngineInterface = \
+                concrete_search_engine: SearchEngineInterface = \
                     SearchEngineFactory.get_se(search_engine, keyword=keyword, n_images=n_samples)
-                se.download_urls()
-        input("Done! Press any key to return")
+                concrete_search_engine.download_urls()
+        press_any_key()
         self.callback(Transitions.CURRENT)
 
     def run(self):
@@ -113,17 +131,20 @@ class PromptForKeywords(State):
         print("When you are done press Enter")
         while True:
             key_word = input("Keyword: ")
+            if self.check_for_generic_answer(key_word):
+                return
+            print("still here")
             if not key_word:
                 break
-            if key_word == "main":
-                self.main()
-            if key_word == "prev":
-                self.callback(Transitions.PREVIOUS)
-                return
+            # if key_word == "main":
+            #     self.main()
+            # if key_word == "prev":
+            #     self.callback(Transitions.PREVIOUS)
+            #     return
             keywords.add(key_word)
             print(f"Keywords are: {keywords}")
 
-        WebscraperDfa.KEYWORDS = list(keywords)
+        self.config.keywords = list(keywords)
         self.callback(Transitions.NEXT)
 
 
@@ -154,7 +175,7 @@ class PromptForNSamples(State):
             print("This has to be an int")
             answer = input("Samples: ")
 
-        WebscraperDfa.N_SAMPLES = int(answer)
+        self.config.n_samples = int(answer)
         self.callback(Transitions.NEXT)
 
 
@@ -185,7 +206,7 @@ class PromptForSearchEngine(State):
                     print("You have to select at least one search engine")
                     time.sleep(1)
                 else:
-                    WebscraperDfa.SEARCH_ENGINES = list(search_engines_to_use)
+                    self.config.search_engines = list(search_engines_to_use)
                     self.callback(Transitions.NEXT)
                     return
             else:
@@ -200,19 +221,15 @@ class Done(State):
     """State to Signal that the configuration step is complete"""
     def run(self):
         print("Configuration is done")
-        print("Press any key to return to the main menu")
+        press_any_key()
         self.callback(Transitions.MAIN_MENU)
 
 
 class WebscraperDfa:
     """State machine for gathering information from the user"""
 
-    KEYWORDS = None
-    TRANSLATIONS = None
-    N_SAMPLES = None
-    SEARCH_ENGINES = None
-
     def __init__(self):
+        self._config = WsConfig()
         self.initial_state: Type[State] = MainMenu
         self.current_state: Union[Type[State], None] = None
 
@@ -241,7 +258,7 @@ class WebscraperDfa:
     def start(self):
         """Starts the sm. First state is the initial state"""
         self.current_state = self.initial_state
-        self.initial_state(callback=self.next)
+        self.initial_state(config=self._config, callback=self.next)
 
     def next(self, transition: Transitions):
         """
@@ -252,22 +269,4 @@ class WebscraperDfa:
         """
         next_state = self.transition_table.get((self.current_state, transition), MainMenu)
         self.current_state = next_state
-        self.current_state(callback=self.next)
-
-    @classmethod
-    def get_config(cls) -> dict:
-        """Returns the current config as dict"""
-        return {
-            "keywords": cls.KEYWORDS,
-            "translations": cls.TRANSLATIONS,
-            "n_samples": cls.N_SAMPLES,
-            "search_engines": cls.SEARCH_ENGINES
-        }
-
-    @classmethod
-    def load_config(cls, config: dict):
-        """Loads the current config from a dict"""
-        cls.KEYWORDS = config.get("keywords")
-        cls.TRANSLATIONS = config.get("translations")
-        cls.N_SAMPLES = config.get("n_samples")
-        cls.SEARCH_ENGINES = config.get("search_engines")
+        self.current_state(config=self._config, callback=self.next)
