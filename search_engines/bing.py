@@ -17,7 +17,7 @@ class Bing(SearchEngineInterface):
 
     def _collect_img_links(self):
         page = 0
-        while len(self.image_urls) < self.n_images:
+        while len(self._image_urls) < self.n_images:
             search_url = self.BING_IMAGE_URL + self.keyword + "&first=" + str(page) + "&count=100"
 
             response = requests.get(search_url, headers=self.USER_AGENT)
@@ -26,7 +26,7 @@ class Bing(SearchEngineInterface):
             page += 100
             results = re.findall(r"murl&quot;:&quot;(.*?)&quot;", html)
             for link in results:
-                self.image_urls.append(link)
+                self._image_urls.append(link)
 
-                if len(self.image_urls) == self.n_images:
+                if len(self._image_urls) == self.n_images:
                     break

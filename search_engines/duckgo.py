@@ -41,14 +41,14 @@ class DuckGo(SearchEngineInterface):
 
         request_url = url + "i.js"
 
-        while len(self.image_urls) < self.n_images:
+        while len(self._image_urls) < self.n_images:
             res = requests.get(request_url, headers=headers, params=params)
             data = json.loads(res.text)
 
             for result in data.get("results"):
-                self.image_urls.append(result.get("image"))
+                self._image_urls.append(result.get("image"))
 
-                if len(self.image_urls) == self.n_images:
+                if len(self._image_urls) == self.n_images:
                     break
 
             if "next" not in data:

@@ -8,6 +8,7 @@ class Config:
     """This class represents a config file for the webscraper"""
 
     def __init__(self):
+        self.dataset_path = None
         self.keywords = None
         self.translations = None
         self.n_samples = None
@@ -16,6 +17,7 @@ class Config:
     def to_json(self) -> dict:
         """Returns the config as dict"""
         return {
+            "dataset_path": self.dataset_path,
             "keywords": self.keywords,
             "translations": self.translations,
             "n_samples": self.n_samples,
@@ -27,6 +29,7 @@ class Config:
         if file_path.exists() and file_path.is_file():
             with open(file_path.resolve(), "r", encoding="utf-8") as config_file:
                 cfg: dict = json.load(config_file)
+            self.dataset_path = cfg.get("dataset_path")
             self.keywords = cfg.get("keywords")
             self.translations = cfg.get("translations")
             self.n_samples = cfg.get("n_samples")

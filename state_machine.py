@@ -9,6 +9,7 @@ from typing import Callable, Type, Dict, Union, Tuple
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
 from webscraper_config import Config as WsConfig
+from utils.download_urls import download_urls
 
 
 def clear():
@@ -64,6 +65,8 @@ class State(ABC):
 class MainMenu(State):
     """Main State of the DFA"""
     def __init__(self, config: WsConfig, callback: Callable):
+        # This State is implemented with a mapping of functions because it makes it easier to read
+        # and cleans up the run function quite a bit
         self.option_mapping = {
             "1": ("Create new config", self.create_new_config),
             "2": ("Print current config", self.print_current_config),
@@ -105,7 +108,7 @@ class MainMenu(State):
             for keyword in config.get("keywords"):
                 concrete_search_engine: SearchEngineInterface = \
                     SearchEngineFactory.get_se(search_engine, keyword=keyword, n_images=n_samples)
-                concrete_search_engine.download_urls()
+                download_urls(pathlib.Path("/home/hg127258/PycharmProjects/webscraping20/test"), concrete_search_engine.get_img_urls())
         press_any_key()
         self.callback(Transitions.CURRENT)
 
@@ -122,6 +125,18 @@ class MainMenu(State):
         self.option_mapping.get(answer)[1]()
 
 
+class PromptForDownloadPath(State):
+    """State to ask for a path to download the scraped images to"""
+    def run(self):
+        print("Enter a path to download your dataset to")
+        answer = input("Path: ")
+        if self.check_for_generic_answer(answer):
+            return
+
+        self.config.dataset_path = answer
+        self.callback(Transitions.NEXT)
+
+
 class PromptForKeywords(State):
     """State to ask for keywords to use in the search"""
     def run(self):
@@ -136,11 +151,6 @@ class PromptForKeywords(State):
             print("still here")
             if not key_word:
                 break
-            # if key_word == "main":
-            #     self.main()
-            # if key_word == "prev":
-            #     self.callback(Transitions.PREVIOUS)
-            #     return
             keywords.add(key_word)
             print(f"Keywords are: {keywords}")
 
@@ -154,12 +164,15 @@ class PromptForTranslation(State):
         print("Should your keywords be translated?")
         print("To get back to the previous screen you can write prev")
         answer = input("(yes | NO | prev): ").lower()
-        while answer not in ["yes", "no", "prev", ""]:
-            print(f"{answer} is not a valid choice, try again!")
-            answer = input("(yes | NO | prev): ").lower()
+        if self.check_for_generic_answer(answer):
+            return
 
-        if answer == "prev":
-            self.callback(Transitions.PREVIOUS)
+        while answer not in ["yes", "no", ""]:
+            print(f"{answer} is not a valid choice, try again!")
+            answer = input("(yes | NO): ").lower()
+            if self.check_for_generic_answer(answer):
+                return
+
         if not answer or answer == "no":
             self.callback(Transitions.NEXT)
 
@@ -169,14 +182,18 @@ class PromptForTranslation(State):
 class PromptForNSamples(State):
     """State to get the number of samples to use"""
     def run(self):
-        print("How many samples should be downloaded?")
-        answer = input("Samples: ")
-        while not answer.isdigit():
-            print("This has to be an int")
-            answer = input("Samples: ")
+        while True:
+            print("How many samples should be downloaded?")
+            answer = input("number of samples: ")
+            if self.check_for_generic_answer(answer):
+                return
 
-        self.config.n_samples = int(answer)
-        self.callback(Transitions.NEXT)
+            if not answer.isdigit():
+                print("This has to be an integer!\n")
+            else:
+                self.config.n_samples = int(answer)
+                self.callback(Transitions.NEXT)
+                return
 
 
 class PromptForSearchEngine(State):
@@ -235,12 +252,16 @@ class WebscraperDfa:
 
         self.transition_table: Dict[Tuple[Type[State], Transitions], Type[State]] = {
             # State = MainMenu
-            (MainMenu, Transitions.NEXT): PromptForKeywords,
+            (MainMenu, Transitions.NEXT): PromptForDownloadPath,
             (MainMenu, Transitions.CURRENT): MainMenu,
+
+            # State = PromptForDownloadPath
+            (PromptForDownloadPath, Transitions.NEXT): PromptForKeywords,
+            (PromptForDownloadPath, Transitions.PREVIOUS): MainMenu,
 
             # State = PromptForKeywords
             (PromptForKeywords, Transitions.NEXT): PromptForTranslation,
-            (PromptForKeywords, Transitions.PREVIOUS): MainMenu,
+            (PromptForKeywords, Transitions.PREVIOUS): PromptForDownloadPath,
 
             # State = PromptForTranslation
             (PromptForTranslation, Transitions.NEXT): PromptForNSamples,
