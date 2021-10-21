@@ -98,10 +98,9 @@ class MainMenu(State):
         """
         Starts the scraping process by getting the search engine implementation and initializing it
         """
-        config = self.config.to_json()
-        n_samples = config.get("n_samples")
-        for search_engine in config.get("search_engines"):
-            for keyword in config.get("keywords"):
+        n_samples = self.config.n_samples
+        for search_engine in self.config.search_engines:
+            for keyword in self.config.keywords + self.config.translations:
                 concrete_search_engine: SearchEngineInterface = \
                     SearchEngineFactory.get_se(search_engine, keyword=keyword, n_images=n_samples)
                 download_urls(pathlib.Path(self.config.dataset_path),
