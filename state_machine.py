@@ -50,10 +50,6 @@ class State(ABC):
         """Impl of what the state is doing"""
         raise NotImplementedError
 
-    def main(self):
-        """Callback to Main Menu"""
-        self.callback(Transitions.MAIN_MENU)
-
     def check_for_generic_answer(self, user_input: str) -> bool:
         """Check if user is entering a command like prev, next, main etc..."""
         if (clean_input := user_input.strip(" ").rstrip(" ")) in self.generic_answers:
@@ -108,7 +104,8 @@ class MainMenu(State):
             for keyword in config.get("keywords"):
                 concrete_search_engine: SearchEngineInterface = \
                     SearchEngineFactory.get_se(search_engine, keyword=keyword, n_images=n_samples)
-                download_urls(pathlib.Path("/home/hg127258/PycharmProjects/webscraping20/test"), concrete_search_engine.get_img_urls())
+                download_urls(pathlib.Path(self.config.dataset_path),
+                              concrete_search_engine.get_img_urls())
         press_any_key()
         self.callback(Transitions.CURRENT)
 
