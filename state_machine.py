@@ -145,7 +145,6 @@ class PromptForKeywords(State):
             key_word = input("Keyword: ")
             if self.check_for_generic_answer(key_word):
                 return
-            print("still here")
             if not key_word:
                 break
             keywords.add(key_word)
@@ -158,22 +157,55 @@ class PromptForKeywords(State):
 class PromptForTranslation(State):
     """State to ask if keywords should be translated"""
     def run(self):
+        no_answers = ["no", "n", ""]
+        yes_answers = ["yes", "y"]
+
         print("Should your keywords be translated?")
         print("To get back to the previous screen you can write prev")
-        answer = input("(yes | NO | prev): ").lower()
+        answer = input("(yes | NO): ").lower()
         if self.check_for_generic_answer(answer):
             return
 
-        while answer not in ["yes", "no", ""]:
+        while answer not in yes_answers + no_answers:
             print(f"{answer} is not a valid choice, try again!")
             answer = input("(yes | NO): ").lower()
             if self.check_for_generic_answer(answer):
                 return
 
-        if not answer or answer == "no":
+        if answer in no_answers:
+            self.config.translations = None
             self.callback(Transitions.NEXT)
+            return
 
-        # TODO implement translation of keywords
+        # Import the translator here because it makes an internet connection which would be rather
+        # useless if the user doesn't want to translate at all
+        from deep_translator import GoogleTranslator  # pylint: disable=import-outside-toplevel
+
+        supported_languages = GoogleTranslator().get_supported_languages(as_dict=True)
+        translate_to = set("")
+
+        print("Which languages do you want to translate to? Enter the language code")
+        print("When done press Enter")
+        while True:
+            answer = input("Language code: ")
+            if not answer:
+                break
+            if answer not in supported_languages and answer not in supported_languages.values():
+                print(f"{answer} is not a supported language")
+                continue
+            translate_to.add(answer)
+
+        if not translate_to or not self.config.keywords:
+            # check if the user left one of those empty
+            self.config.translations = None
+        else:
+            translations = []
+            for language in translate_to:
+                for keyword in self.config.keywords:
+                    translations.append(GoogleTranslator(source="auto", target=language).
+                                        translate(keyword))
+            self.config.translations = translations
+        self.callback(Transitions.NEXT)
 
 
 class PromptForNSamples(State):
