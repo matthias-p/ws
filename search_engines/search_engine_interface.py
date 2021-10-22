@@ -4,6 +4,8 @@ from typing import List
 
 
 class SearchEngineInterface(ABC):
+    """Interface of the search engines. Implement this when you add a new se"""
+
     def __init__(self, keyword: str, n_images: int, **kwargs):
         self._image_urls: List[str] = []
         self.keyword = keyword
