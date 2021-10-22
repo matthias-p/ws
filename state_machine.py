@@ -5,6 +5,7 @@ from abc import ABC
 from enum import Enum, auto
 from typing import Type, Dict, Union, Tuple
 
+from exceptions.sm_exceptions import NextTransitionException
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
 from utils.download_urls import download_urls
@@ -30,10 +31,6 @@ class Transitions(Enum):
     CURRENT = auto()
     MAIN_MENU = auto()
     END = auto()
-
-
-class NextTransitionException(Exception):
-    """Exception that is thrown when the conditions to transition are not met"""
 
 
 class State(ABC):
