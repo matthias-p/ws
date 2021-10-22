@@ -3,12 +3,13 @@ import re
 
 import requests
 
-from .search_engine_interface import SearchEngineInterface
 from .registry import SearchEngineFactory
+from .search_engine_interface import SearchEngineInterface
 
 
 @SearchEngineFactory.register_se(name="Bing SE")
-class Bing(SearchEngineInterface):
+class Bing(SearchEngineInterface):  # pylint: disable=too-few-public-methods
+    """Implementation of bing image search"""
 
     BING_IMAGE_URL = "https://www.bing.com/images/async?q="
     USER_AGENT = {

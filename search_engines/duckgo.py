@@ -4,12 +4,14 @@ import re
 
 import requests
 
-from .search_engine_interface import SearchEngineInterface
 from .registry import SearchEngineFactory
+from .search_engine_interface import SearchEngineInterface
 
 
 @SearchEngineFactory.register_se(name="Duckgo SE")
-class DuckGo(SearchEngineInterface):
+class DuckGo(SearchEngineInterface):  # pylint: disable=too-few-public-methods
+    """Implementation of duckgo image search"""
+
     def _collect_img_links(self):
         url = "https://duckduckgo.com/"
         params = {"q": self.keyword}
