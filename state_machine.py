@@ -1,15 +1,14 @@
 """This file contains the sm for the cli menu"""
 import os
 import pathlib
-import time
 from abc import ABC
 from enum import Enum, auto
 from typing import Callable, Type, Dict, Union, Tuple
 
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
-from webscraper_config import Config as WsConfig
 from utils.download_urls import download_urls
+from webscraper_config import Config
 
 
 def clear():
@@ -32,7 +31,7 @@ class Transitions(Enum):
 class State(ABC):
     """ABC of a state in the sm"""
 
-    def __init__(self, config: WsConfig, callback: Callable):
+    def __init__(self, config: Config, callback: Callable):
         """Callback should be called after the state has done its work."""
         self.config = config
         self.callback = callback
@@ -59,8 +58,8 @@ class State(ABC):
 
 
 class MainMenu(State):
-    """Main State of the DFA"""
-    def __init__(self, config: WsConfig, callback: Callable):
+    """Main State of the SM"""
+    def __init__(self, config: Config, callback: Callable):
         # This State is implemented with a mapping of functions because it makes it easier to read
         # and cleans up the run function quite a bit
         self.option_mapping = {
@@ -145,6 +144,9 @@ class PromptForKeywords(State):
             if self.check_for_generic_answer(key_word):
                 return
             if not key_word:
+                if not keywords:
+                    print("Please enter at least one keyword")
+                    continue
                 break
             keywords.add(key_word)
             print(f"Keywords are: {keywords}")
@@ -183,12 +185,17 @@ class PromptForTranslation(State):
         supported_languages = GoogleTranslator().get_supported_languages(as_dict=True)
         translate_to = set("")
 
-        print("Which languages do you want to translate to? Enter the language code")
+        print("Which languages do you want to translate to?")
+        print("For a list of valid options type: languages")
         print("When done press Enter")
         while True:
             answer = input("Language code: ")
             if not answer:
                 break
+            if answer == "languages":
+                for key, value in supported_languages.items():
+                    print(f"{key} = {value}")
+                continue
             if answer not in supported_languages and answer not in supported_languages.values():
                 print(f"{answer} is not a supported language")
                 continue
@@ -208,10 +215,10 @@ class PromptForTranslation(State):
 
 
 class PromptForNSamples(State):
-    """State to get the number of samples to use"""
+    """State to get the number of samples to use per keyword"""
     def run(self):
         while True:
-            print("How many samples should be downloaded?")
+            print("How many samples (per keyword) should be downloaded?")
             answer = input("number of samples: ")
             if self.check_for_generic_answer(answer):
                 return
@@ -229,27 +236,28 @@ class PromptForSearchEngine(State):
     def run(self):
         search_engines_to_use = set("")
         valid_options = [str(i) for i in range(0, SearchEngineFactory.get_number_of_ses())]
-        valid_options.append("done")
         valid_options.append("")
 
         while True:
             clear()
             print("Select the search Engines to use")
+            print("When done press Enter")
 
             for count, name in enumerate(SearchEngineFactory.get_names()):
                 print(f"{'[x]' if name in search_engines_to_use else '[ ]'}  {count}. {name}")
 
             answer = input("Number: ")
+            if self.check_for_generic_answer(answer):
+                return
 
             while answer not in valid_options:
                 print("Answer is not valid")
                 print(f"Options are: {valid_options}")
                 answer = input("Number: ")
 
-            if not answer or answer == "done":
+            if not answer:
                 if len(search_engines_to_use) < 1:
                     print("You have to select at least one search engine")
-                    time.sleep(1)
                 else:
                     self.config.search_engines = list(search_engines_to_use)
                     self.callback(Transitions.NEXT)
@@ -270,11 +278,11 @@ class Done(State):
         self.callback(Transitions.MAIN_MENU)
 
 
-class WebscraperDfa:
+class WebscraperStateMachine:
     """State machine for gathering information from the user"""
 
     def __init__(self):
-        self._config = WsConfig()
+        self._config = Config()
         self.initial_state: Type[State] = MainMenu
         self.current_state: Union[Type[State], None] = None
 
