@@ -3,7 +3,7 @@ import os
 import pathlib
 from abc import ABC
 from enum import Enum, auto
-from typing import Callable, Type, Dict, Union, Tuple
+from typing import Type, Dict, Union, Tuple
 
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
@@ -13,7 +13,10 @@ from webscraper_config import Config
 
 def clear():
     """Clears the screen on command line"""
-    os.system("clear")
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        os.system("clear")
 
 
 def press_any_key():  # pylint: disable=C0116
@@ -26,15 +29,19 @@ class Transitions(Enum):
     PREVIOUS = auto()
     CURRENT = auto()
     MAIN_MENU = auto()
+    END = auto()
+
+
+class NextTransitionException(Exception):
+    """Exception that is thrown when the conditions to transition are not met"""
 
 
 class State(ABC):
     """ABC of a state in the sm"""
 
-    def __init__(self, config: Config, callback: Callable):
+    def __init__(self, config: Config):
         """Callback should be called after the state has done its work."""
         self.config = config
-        self.callback = callback
 
         self.generic_answers = {
             "main": Transitions.MAIN_MENU,
@@ -43,55 +50,61 @@ class State(ABC):
         }
 
         clear()
-        self.run()
 
-    def run(self):
+    def run(self) -> Transitions:
         """Impl of what the state is doing"""
         raise NotImplementedError
 
-    def check_for_generic_answer(self, user_input: str) -> bool:
+    def _check_next_criteria(self):
+        pass
+
+    def check_for_generic_answer(self, user_input: str) -> Transitions | None:
         """Check if user is entering a command like prev, next, main etc..."""
         if (clean_input := user_input.strip(" ").rstrip(" ")) in self.generic_answers:
-            self.callback(self.generic_answers.get(clean_input))
-            return True
-        return False
+            transition = self.generic_answers.get(clean_input)
+            if transition is Transitions.NEXT:
+                self._check_next_criteria()
+            return transition
+        return None
 
 
 class MainMenu(State):
     """Main State of the SM"""
-    def __init__(self, config: Config, callback: Callable):
+    def __init__(self, config: Config):
         # This State is implemented with a mapping of functions because it makes it easier to read
         # and cleans up the run function quite a bit
+        super().__init__(config=config)
+
         self.option_mapping = {
             "1": ("Create new config", self.create_new_config),
             "2": ("Print current config", self.print_current_config),
             "3": ("Export current config", self.export_current_config),
             "4": ("Load saved config", self.load_config),
             "5": ("Start scraping", self.scrape),
-            "quit": ("Exit the program", exit)
+            "quit": ("Exit the program", self.quit)
         }
-        super().__init__(config=config, callback=callback)
 
-    def create_new_config(self):
+    @staticmethod
+    def create_new_config():
         """Begin process of creation of webscraper config"""
-        self.callback(Transitions.NEXT)
+        return Transitions.NEXT
 
     def print_current_config(self):
         """Print the config"""
         print("Current config is: ")
         print(self.config.to_json())
         press_any_key()
-        self.callback(Transitions.CURRENT)
+        return Transitions.CURRENT
 
     def export_current_config(self):
         """Exports the config as config.json"""
         self.config.save_config(pathlib.Path("./config.json"))
-        self.callback(Transitions.CURRENT)
+        return Transitions.CURRENT
 
     def load_config(self):
         """Loads config from current directory"""
         self.config.load_config(pathlib.Path("./config.json"))
-        self.callback(Transitions.CURRENT)
+        return Transitions.CURRENT
 
     def scrape(self):
         """
@@ -105,7 +118,12 @@ class MainMenu(State):
                 download_urls(pathlib.Path(self.config.dataset_path),
                               concrete_search_engine.get_img_urls())
         press_any_key()
-        self.callback(Transitions.CURRENT)
+        return Transitions.CURRENT
+
+    @staticmethod
+    def quit():
+        """Transition to final state"""
+        return Transitions.END
 
     def run(self):
         print("Main Menu: ")
@@ -117,67 +135,72 @@ class MainMenu(State):
             print(f"{answer} is not a valid choice")
             answer = input("Choice: ")
 
-        self.option_mapping.get(answer)[1]()
+        return self.option_mapping.get(answer)[1]()
 
 
 class PromptForDownloadPath(State):
     """State to ask for a path to download the scraped images to"""
-    def run(self):
-        print("Enter a path to download your dataset to")
-        answer = input("Path: ")
-        if self.check_for_generic_answer(answer):
-            return
 
-        self.config.dataset_path = answer
-        self.callback(Transitions.NEXT)
+    def run(self) -> Transitions:
+        print("Enter a path to download your dataset to")
+        path = input("Path: ")
+        if (transition := self.check_for_generic_answer(path)) is not None:
+            return transition
+
+        self.config.dataset_path = path
+        return Transitions.NEXT
 
 
 class PromptForKeywords(State):
     """State to ask for keywords to use in the search"""
-    def run(self):
-        keywords = set("")
 
+    def __init__(self, config: Config):
+        super().__init__(config)
+
+        self.generic_answers[""] = Transitions.NEXT  # empty string can be treated as generic answer
+        self.keywords = set("")
+
+    def _check_next_criteria(self):
+        if not self.keywords:
+            raise NextTransitionException("Enter at least one keyword")
+        self.config.keywords = list(self.keywords)
+
+    def run(self) -> Transitions:
         print("Type the keywords you want to search for.")
         print("When you are done press Enter")
         while True:
-            key_word = input("Keyword: ")
-            if self.check_for_generic_answer(key_word):
-                return
-            if not key_word:
-                if not keywords:
-                    print("Please enter at least one keyword")
-                    continue
-                break
-            keywords.add(key_word)
-            print(f"Keywords are: {keywords}")
-
-        self.config.keywords = list(keywords)
-        self.callback(Transitions.NEXT)
+            _keyword = input("Keyword: ")
+            try:
+                if (transition := self.check_for_generic_answer(_keyword)) is not None:
+                    return transition
+            except NextTransitionException as ex:
+                print(ex)
+                continue
+            self.keywords.add(_keyword)
 
 
 class PromptForTranslation(State):
     """State to ask if keywords should be translated"""
-    def run(self):
-        no_answers = ["no", "n", ""]
+
+    def run(self) -> Transitions:
+        no_answers = ["no", "n", "NO", ""]
         yes_answers = ["yes", "y"]
 
-        print("Should your keywords be translated?")
-        print("To get back to the previous screen you can write prev")
-        answer = input("(yes | NO): ").lower()
-        if self.check_for_generic_answer(answer):
-            return
+        while True:
+            print("Should your keywords be translated?")
+            answer = input("yes | NO")
+            if (transition := self.check_for_generic_answer(answer)) is not None:
+                return transition
 
-        while answer not in yes_answers + no_answers:
-            print(f"{answer} is not a valid choice, try again!")
-            answer = input("(yes | NO): ").lower()
-            if self.check_for_generic_answer(answer):
-                return
+            if answer in no_answers:  # answer is no
+                self.config.translations = None
+                return Transitions.NEXT
+            if answer not in yes_answers:  # answer is not yes so it has to be invalid
+                print("Answer is not a valid choice!")
+                continue
+            return self._translate()
 
-        if answer in no_answers:
-            self.config.translations = None
-            self.callback(Transitions.NEXT)
-            return
-
+    def _translate(self) -> Transitions:
         # Import the translator here because it makes an internet connection which would be rather
         # useless if the user doesn't want to translate at all
         from deep_translator import GoogleTranslator  # pylint: disable=import-outside-toplevel
@@ -189,8 +212,14 @@ class PromptForTranslation(State):
         print("For a list of valid options type: languages")
         print("When done press Enter")
         while True:
-            answer = input("Language code: ")
+            answer = input("Language code or Country name: ")
+
+            if (transition := self.check_for_generic_answer(answer)) is not None:
+                return transition
+
             if not answer:
+                if not translate_to:
+                    return Transitions.NEXT
                 break
             if answer == "languages":
                 for key, value in supported_languages.items():
@@ -201,84 +230,97 @@ class PromptForTranslation(State):
                 continue
             translate_to.add(answer)
 
-        if not translate_to or not self.config.keywords:
-            # check if the user left one of those empty
-            self.config.translations = None
-        else:
-            translations = []
-            for language in translate_to:
-                for keyword in self.config.keywords:
-                    translations.append(GoogleTranslator(source="auto", target=language).
-                                        translate(keyword))
-            self.config.translations = translations
-        self.callback(Transitions.NEXT)
+        translations = []
+        for language in translate_to:
+            for keyword in self.config.keywords:
+                translations.append(GoogleTranslator(source="auto", target=language).
+                                    translate(keyword))
+        self.config.translations = translations
+        return Transitions.NEXT
 
 
 class PromptForNSamples(State):
     """State to get the number of samples to use per keyword"""
-    def run(self):
+
+    def __init__(self, config: Config):
+        super().__init__(config)
+        self.n_samples = None
+
+    def _check_next_criteria(self):
+        if self.n_samples is None or not self.n_samples.isdigit() or int(self.n_samples) <= 0:
+            raise NextTransitionException("Enter a valid number of samples!")
+        self.config.n_samples = int(self.n_samples)
+
+    def run(self) -> Transitions:
         while True:
             print("How many samples (per keyword) should be downloaded?")
-            answer = input("number of samples: ")
-            if self.check_for_generic_answer(answer):
-                return
+            self.n_samples = input("Number of samples: ")
 
-            if not answer.isdigit():
-                print("This has to be an integer!\n")
-            else:
-                self.config.n_samples = int(answer)
-                self.callback(Transitions.NEXT)
-                return
+            try:
+                if (transition := self.check_for_generic_answer(self.n_samples)) is not None:
+                    return transition
+                self._check_next_criteria()
+                return Transitions.NEXT
+            except NextTransitionException as ex:
+                print(ex)
+                continue
 
 
 class PromptForSearchEngine(State):
     """State to get the Search Engines to use"""
-    def run(self):
-        search_engines_to_use = set("")
+
+    def __init__(self, config: Config):
+        super().__init__(config)
+
+        self.generic_answers[""] = Transitions.NEXT  # empty string can be treated as generic answer
+        self.search_engines_to_use = set("")
+
+    def _check_next_criteria(self):
+        if not self.search_engines_to_use:
+            raise NextTransitionException("Select at least one search engine!")
+        self.config.search_engines = list(self.search_engines_to_use)
+
+    def run(self) -> Transitions:
         valid_options = [str(i) for i in range(0, SearchEngineFactory.get_number_of_ses())]
         valid_options.append("")
 
         while True:
-            clear()
             print("Select the search Engines to use")
             print("When done press Enter")
 
             for count, name in enumerate(SearchEngineFactory.get_names()):
-                print(f"{'[x]' if name in search_engines_to_use else '[ ]'}  {count}. {name}")
+                print(f"{'[x]' if name in self.search_engines_to_use else '[ ]'}  {count}. {name}")
 
             answer = input("Number: ")
-            if self.check_for_generic_answer(answer):
-                return
+            try:
+                if (transition := self.check_for_generic_answer(answer)) is not None:
+                    return transition
+            except NextTransitionException as ex:
+                print(ex)
+                continue
 
-            while answer not in valid_options:
+            if answer not in valid_options:
                 print("Answer is not valid")
                 print(f"Options are: {valid_options}")
-                answer = input("Number: ")
+                continue
 
-            if not answer:
-                if len(search_engines_to_use) < 1:
-                    print("You have to select at least one search engine")
-                else:
-                    self.config.search_engines = list(search_engines_to_use)
-                    self.callback(Transitions.NEXT)
-                    return
+            search_engine = SearchEngineFactory.get_names()[int(answer)]
+            if search_engine not in self.search_engines_to_use:
+                self.search_engines_to_use.add(search_engine)
             else:
-                search_engine = SearchEngineFactory.get_names()[int(answer)]
-                if search_engine not in search_engines_to_use:
-                    search_engines_to_use.add(search_engine)
-                else:
-                    search_engines_to_use.remove(search_engine)
+                self.search_engines_to_use.remove(search_engine)
 
 
 class Done(State):
     """State to Signal that the configuration step is complete"""
-    def run(self):
+    def run(self) -> Transitions:
         print("Configuration is done")
+        self.config.pretty_print()
         press_any_key()
-        self.callback(Transitions.MAIN_MENU)
+        return Transitions.MAIN_MENU
 
 
-class WebscraperStateMachine:
+class WebscraperStateMachine:  # pylint: disable=too-few-public-methods
     """State machine for gathering information from the user"""
 
     def __init__(self):
@@ -315,9 +357,12 @@ class WebscraperStateMachine:
     def start(self):
         """Starts the sm. First state is the initial state"""
         self.current_state = self.initial_state
-        self.initial_state(config=self._config, callback=self.next)
+        transition = None
+        while transition is not Transitions.END:
+            transition = self.current_state(config=self._config).run()
+            self._next(transition=transition)
 
-    def next(self, transition: Transitions):
+    def _next(self, transition: Transitions):
         """
         This will transition to the next state in the transition table. It is used as the
         callback for the state class
@@ -326,4 +371,3 @@ class WebscraperStateMachine:
         """
         next_state = self.transition_table.get((self.current_state, transition), MainMenu)
         self.current_state = next_state
-        self.current_state(config=self._config, callback=self.next)
