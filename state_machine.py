@@ -5,6 +5,7 @@ from abc import ABC
 from enum import Enum, auto
 from typing import Callable, Type, Dict, Union, Tuple
 
+from exceptions.state_machine_exceptions import NextCriteriaNotSatisfiedException
 from search_engines.registry import SearchEngineFactory
 from search_engines.search_engine_interface import SearchEngineInterface
 from utils.download_urls import download_urls
@@ -43,16 +44,23 @@ class State(ABC):
         }
 
         clear()
-        self.run()
 
     def run(self):
         """Impl of what the state is doing"""
         raise NotImplementedError
 
+    def _check_next_criteria(self):
+        """
+        Use this method to implement checks which have to be passed before continuing.
+        """
+
     def check_for_generic_answer(self, user_input: str) -> bool:
         """Check if user is entering a command like prev, next, main etc..."""
         if (clean_input := user_input.strip(" ").rstrip(" ")) in self.generic_answers:
-            self.callback(self.generic_answers.get(clean_input))
+            transition = self.generic_answers.get(clean_input)
+            if transition is Transitions.NEXT:
+                self._check_next_criteria()
+            self.callback(transition)
             return True
         return False
 
@@ -71,6 +79,7 @@ class MainMenu(State):
             "quit": ("Exit the program", exit)
         }
         super().__init__(config=config, callback=callback)
+        self.run()
 
     def create_new_config(self):
         """Begin process of creation of webscraper config"""
@@ -122,6 +131,11 @@ class MainMenu(State):
 
 class PromptForDownloadPath(State):
     """State to ask for a path to download the scraped images to"""
+
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+        self.run()
+
     def run(self):
         print("Enter a path to download your dataset to")
         answer = input("Path: ")
@@ -134,29 +148,47 @@ class PromptForDownloadPath(State):
 
 class PromptForKeywords(State):
     """State to ask for keywords to use in the search"""
-    def run(self):
-        keywords = set("")
 
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+        self.keywords = set("")
+
+        self.run()
+
+    def _check_next_criteria(self):
+        if not self.keywords:
+            raise NextCriteriaNotSatisfiedException("Enter at least one keyword!")
+
+    def run(self):
         print("Type the keywords you want to search for.")
         print("When you are done press Enter")
         while True:
             key_word = input("Keyword: ")
-            if self.check_for_generic_answer(key_word):
-                return
-            if not key_word:
-                if not keywords:
-                    print("Please enter at least one keyword")
-                    continue
-                break
-            keywords.add(key_word)
-            print(f"Keywords are: {keywords}")
+            try:
+                if self.check_for_generic_answer(key_word):
+                    return
+                if not key_word:
+                    self._check_next_criteria()
+                    break
+            except NextCriteriaNotSatisfiedException as ex:
+                print(ex)
+                continue
 
-        self.config.keywords = list(keywords)
+            self.keywords.add(key_word)
+            print(f"Keywords are: {self.keywords}")
+
+        self.config.keywords = list(self.keywords)
         self.callback(Transitions.NEXT)
 
 
 class PromptForTranslation(State):
     """State to ask if keywords should be translated"""
+
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+
+        self.run()
+
     def run(self):
         no_answers = ["no", "n", ""]
         yes_answers = ["yes", "y"]
@@ -189,7 +221,7 @@ class PromptForTranslation(State):
         print("For a list of valid options type: languages")
         print("When done press Enter")
         while True:
-            answer = input("Language code: ")
+            answer = input("Language code or country name: ")
             if not answer:
                 break
             if answer == "languages":
@@ -216,62 +248,98 @@ class PromptForTranslation(State):
 
 class PromptForNSamples(State):
     """State to get the number of samples to use per keyword"""
+
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+        self.n_samples = None
+
+        self.run()
+
+    def _check_next_criteria(self):
+        if self.n_samples is None or not self.n_samples.isdigit() or int(self.n_samples) <= 0:
+            raise NextCriteriaNotSatisfiedException("Enter a positive Integer > 0") from None
+
     def run(self):
         while True:
             print("How many samples (per keyword) should be downloaded?")
-            answer = input("number of samples: ")
-            if self.check_for_generic_answer(answer):
-                return
+            self.n_samples = input("Number of samples: ")
 
-            if not answer.isdigit():
-                print("This has to be an integer!\n")
-            else:
-                self.config.n_samples = int(answer)
+            try:
+                if self.check_for_generic_answer(self.n_samples):
+                    return
+                self._check_next_criteria()
+                self.config.n_samples = int(self.n_samples)
                 self.callback(Transitions.NEXT)
-                return
+                break
+            except NextCriteriaNotSatisfiedException as ex:
+                print(ex)
+                continue
 
 
 class PromptForSearchEngine(State):
     """State to get the Search Engines to use"""
+
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+        self.search_engines_to_use = set("")
+
+        self.run()
+
+    def _check_next_criteria(self):
+        if not self.search_engines_to_use:
+            raise NextCriteriaNotSatisfiedException("Select at least one search engine") from None
+
     def run(self):
-        search_engines_to_use = set("")
         valid_options = [str(i) for i in range(0, SearchEngineFactory.get_number_of_ses())]
-        valid_options.append("")
 
         while True:
-            clear()
-            print("Select the search Engines to use")
+            print("Select the search Engines to use!")
             print("When done press Enter")
 
             for count, name in enumerate(SearchEngineFactory.get_names()):
-                print(f"{'[x]' if name in search_engines_to_use else '[ ]'}  {count}. {name}")
+                print(f"{'[x]' if name in self.search_engines_to_use else '[ ]'}  {count}. {name}")
 
             answer = input("Number: ")
-            if self.check_for_generic_answer(answer):
-                return
+            try:
+                if self.check_for_generic_answer(answer):
+                    return
+                if not answer:
+                    self._check_next_criteria()
+                    break
+            except NextCriteriaNotSatisfiedException as ex:
+                print(ex)
+                continue
 
             while answer not in valid_options:
                 print("Answer is not valid")
                 print(f"Options are: {valid_options}")
                 answer = input("Number: ")
 
-            if not answer:
-                if len(search_engines_to_use) < 1:
-                    print("You have to select at least one search engine")
-                else:
-                    self.config.search_engines = list(search_engines_to_use)
-                    self.callback(Transitions.NEXT)
-                    return
+            # if not answer:
+            #     if len(self.search_engines_to_use) < 1:
+            #         print("You have to select at least one search engine")
+            #     else:
+            #         self.config.search_engines = list(self.search_engines_to_use)
+            #         self.callback(Transitions.NEXT)
+            #         return
+            # else:
+            search_engine = SearchEngineFactory.get_names()[int(answer)]
+            if search_engine not in self.search_engines_to_use:
+                self.search_engines_to_use.add(search_engine)
             else:
-                search_engine = SearchEngineFactory.get_names()[int(answer)]
-                if search_engine not in search_engines_to_use:
-                    search_engines_to_use.add(search_engine)
-                else:
-                    search_engines_to_use.remove(search_engine)
+                self.search_engines_to_use.remove(search_engine)
+        self.config.search_engines = list(self.search_engines_to_use)
+        self.callback(Transitions.NEXT)
 
 
 class Done(State):
     """State to Signal that the configuration step is complete"""
+
+    def __init__(self, config: Config, callback: Callable):
+        super().__init__(config, callback)
+
+        self.run()
+
     def run(self):
         print("Configuration is done")
         press_any_key()
@@ -326,4 +394,5 @@ class WebscraperStateMachine:
         """
         next_state = self.transition_table.get((self.current_state, transition), MainMenu)
         self.current_state = next_state
+        print(f"Current state: {self.current_state}")
         self.current_state(config=self._config, callback=self.next)
