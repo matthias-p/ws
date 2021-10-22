@@ -41,3 +41,10 @@ class Config:
         """Saves config to given path"""
         with open(file_path.resolve(), "w", encoding="utf-8") as config_file:
             json.dump(self.to_json(), config_file)
+
+    def pretty_print(self):
+        print(f"Dataset Path: {self.dataset_path} \n"
+              f"Keywords: {self.keywords}\n"
+              f"Translations: {self.translations}\n"
+              f"Samples per Keyword: {self.n_samples}\n"
+              f"Search Engine(s): {self.search_engines}")
